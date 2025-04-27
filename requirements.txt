@@ -1,0 +1,8 @@
+ffmpeg-python==0.2.0
+ipykernel==6.29.5
+opencv-python==4.11.0.86
+pandas==2.2.3
+pip-chill==1.0.3
+python-dotenv==1.1.0
+pytube==15.0.0
+yt-dlp==2025.3.31

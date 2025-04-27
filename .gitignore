@@ -1,0 +1,9 @@
+# folders
+venv/
+WLASL/
+__pycache__/
+trimmed_videos/
+videos/
+
+# files
+*.mp4
