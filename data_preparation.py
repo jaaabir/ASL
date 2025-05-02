@@ -32,21 +32,7 @@ class MSASLVideoDataset(Dataset):
         return frames, label
 
     def load_video(self, path):
-        cap = cv2.VideoCapture(path)
-        frames = []
-
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            frame = cv2.resize(frame, (self.img_size, self.img_size))
-            frames.append(frame)
-
-        cap.release()
-
-        frames = np.array(frames)
-
+        frames = read_frames(path, self.img_size)
         # Uniformly sample self.num_frames frames
         total_frames = frames.shape[0]
         if total_frames >= self.num_frames:
@@ -58,6 +44,50 @@ class MSASLVideoDataset(Dataset):
             pad_frames = np.repeat(frames[-1:], pad_len, axis=0)
             frames = np.concatenate((frames, pad_frames), axis=0)
 
-        frames = frames.transpose(0, 3, 1, 2)  # (Frames, Channels, Height, Width)
+        # frames = frames.transpose(0, 3, 1, 2)  # (Frames, Channels, Height, Width)
         frames = torch.from_numpy(frames).float() / 255.0  # normalize 0-1
         return frames
+    
+def read_frames(path, img_size):
+    cap = cv2.VideoCapture(path)
+    frames = []
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        frame = cv2.resize(frame, (img_size, img_size))
+        frames.append(frame)
+
+    cap.release()
+
+    frames = np.array(frames)
+    return frames
+
+
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+from IPython.display import HTML
+
+
+def plot_video_gif(video_tensor, fps=5, label=None):
+    """
+    Displays a video tensor as an animated GIF inline.
+    
+    Args:
+        video_tensor: A torch tensor or numpy array with shape [T, H, W, C] or [T, C, H, W]
+        fps: Frames per second for playback
+    """
+    fig = plt.figure(figsize=(6, 6))
+    img = plt.imshow(video_tensor[0])
+
+    def animate(i):
+        img.set_array(video_tensor[i])
+        return [img]
+    plt.axis('off')
+    if label:
+        plt.title(label)
+    ani = animation.FuncAnimation(fig, animate, frames=len(video_tensor), interval=1000/fps, blit=True)
+    plt.close(fig)
+    return HTML(ani.to_jshtml())

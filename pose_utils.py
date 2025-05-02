@@ -1,80 +1,112 @@
 import mediapipe as mp
-from mediapipe import solutions
-from mediapipe.framework.formats import landmark_pb2
+import torch 
 import numpy as np
-import matplotlib.pyplot as plt
-from mediapipe.tasks import python
-from mediapipe.tasks.python import vision
+import cv2
 
-def detect_face_landmarks(image_path):
-    base_options = python.BaseOptions(model_asset_path='face_landmarker_v2_with_blendshapes.task')
-    options = vision.FaceLandmarkerOptions(base_options=base_options,
-                                        output_face_blendshapes=True,
-                                        output_facial_transformation_matrixes=True,
-                                        num_faces=1)
-    detector = vision.FaceLandmarker.create_from_options(options)
+mp_drawing = mp.solutions.drawing_utils
+mp_drawing_styles = mp.solutions.drawing_styles
+mp_holistic = mp.solutions.holistic
 
-    image = mp.Image.create_from_file(image_path)
-    detection_result = detector.detect(image)
-    annotated_image = draw_landmarks_on_image(image.numpy_view(), detection_result)
-    return detection_result, annotated_image
+# face_contour_style = mp_drawing_styles.get_default_face_mesh_contours_style()
+# face_tesselation_style = mp_drawing_styles.get_default_face_mesh_tesselation_style()
+hand_landmark_style = mp_drawing_styles.get_default_hand_landmarks_style()
+hand_connection_style = mp_drawing_styles.get_default_hand_connections_style()
+pose_landmark_style = mp_drawing_styles.get_default_pose_landmarks_style()
+
+# Reduce the marker size and line thickness
+for k in hand_landmark_style:
+    hand_landmark_style[k].circle_radius = 1
+    hand_landmark_style[k].thickness = 1
+
+for k in hand_connection_style:
+    hand_connection_style[k].thickness = 1
 
 
-def draw_landmarks_on_image(rgb_image, detection_result):
-  face_landmarks_list = detection_result.face_landmarks
-  annotated_image = np.copy(rgb_image)
+UPPER_BODY_LANDMARKS = [
+    mp_holistic.PoseLandmark.LEFT_SHOULDER,
+    mp_holistic.PoseLandmark.RIGHT_SHOULDER,
+    mp_holistic.PoseLandmark.LEFT_ELBOW,
+    mp_holistic.PoseLandmark.RIGHT_ELBOW,
+    mp_holistic.PoseLandmark.LEFT_WRIST,
+    mp_holistic.PoseLandmark.RIGHT_WRIST,
+]
 
-  # Loop through the detected faces to visualize.
-  for idx in range(len(face_landmarks_list)):
-    face_landmarks = face_landmarks_list[idx]
+# Define which connections to draw (upper body only)
+POSE_CONNECTIONS_UPPER_BODY = [
+    (mp_holistic.PoseLandmark.LEFT_WRIST, mp_holistic.PoseLandmark.LEFT_ELBOW),
+    (mp_holistic.PoseLandmark.LEFT_ELBOW, mp_holistic.PoseLandmark.LEFT_SHOULDER),
+    (mp_holistic.PoseLandmark.RIGHT_WRIST, mp_holistic.PoseLandmark.RIGHT_ELBOW),
+    (mp_holistic.PoseLandmark.RIGHT_ELBOW, mp_holistic.PoseLandmark.RIGHT_SHOULDER),
+    (mp_holistic.PoseLandmark.LEFT_SHOULDER, mp_holistic.PoseLandmark.RIGHT_SHOULDER),
+]
 
-    # Draw the face landmarks.
-    face_landmarks_proto = landmark_pb2.NormalizedLandmarkList()
-    face_landmarks_proto.landmark.extend([
-      landmark_pb2.NormalizedLandmark(x=landmark.x, y=landmark.y, z=landmark.z) for landmark in face_landmarks
-    ])
 
-    solutions.drawing_utils.draw_landmarks(
-        image=annotated_image,
-        landmark_list=face_landmarks_proto,
-        connections=mp.solutions.face_mesh.FACEMESH_TESSELATION,
-        landmark_drawing_spec=None,
-        connection_drawing_spec=mp.solutions.drawing_styles
-        .get_default_face_mesh_tesselation_style())
-    solutions.drawing_utils.draw_landmarks(
-        image=annotated_image,
-        landmark_list=face_landmarks_proto,
-        connections=mp.solutions.face_mesh.FACEMESH_CONTOURS,
-        landmark_drawing_spec=None,
-        connection_drawing_spec=mp.solutions.drawing_styles
-        .get_default_face_mesh_contours_style())
-    solutions.drawing_utils.draw_landmarks(
-        image=annotated_image,
-        landmark_list=face_landmarks_proto,
-        connections=mp.solutions.face_mesh.FACEMESH_IRISES,
-          landmark_drawing_spec=None,
-          connection_drawing_spec=mp.solutions.drawing_styles
-          .get_default_face_mesh_iris_connections_style())
+def get_keypoints(df, ind):
+  with mp_holistic.Holistic(
+      static_image_mode=False,
+      model_complexity=2,
+      smooth_landmarks=True,
+      enable_segmentation=False,
+      refine_face_landmarks=False, 
+      min_detection_confidence=0.4,
+      min_tracking_confidence=0.6,
+  ) as holistic:
+      vid = df[ind][0]
+      all_hand_keypoints = []
+      all_pose_keypoints = []
+      all_images = []
 
-  return annotated_image
+      for v in vid:
+          v_np = (v * 255).type(torch.uint8).clip(0, 255).numpy()
+          image = v_np.copy()
+          results = holistic.process(image)
 
-def plot_face_blendshapes_bar_graph(face_blendshapes):
-  # Extract the face blendshapes category names and scores.
-  face_blendshapes_names = [face_blendshapes_category.category_name for face_blendshapes_category in face_blendshapes]
-  face_blendshapes_scores = [face_blendshapes_category.score for face_blendshapes_category in face_blendshapes]
-  # The blendshapes are ordered in decreasing score value.
-  face_blendshapes_ranks = range(len(face_blendshapes_names))
+          keypoints_frame = []
+          pose_frame = []
 
-  fig, ax = plt.subplots(figsize=(12, 12))
-  bar = ax.barh(face_blendshapes_ranks, face_blendshapes_scores, label=[str(x) for x in face_blendshapes_ranks])
-  ax.set_yticks(face_blendshapes_ranks, face_blendshapes_names)
-  ax.invert_yaxis()
+          image = np.zeros(shape=(224,224,3), dtype=np.uint8)
+          if results.left_hand_landmarks:
+              mp_drawing.draw_landmarks(
+                  image, results.left_hand_landmarks, mp_holistic.HAND_CONNECTIONS,
+                  landmark_drawing_spec=hand_landmark_style, connection_drawing_spec=hand_connection_style)
+              for landmark in results.left_hand_landmarks.landmark:
+                  x, y, z = int(landmark.x * image.shape[1]), int(landmark.y * image.shape[0]), landmark.z
+                  keypoints_frame.append(((x, y, z), 'left'))
 
-  # Label each bar with values
-  for score, patch in zip(face_blendshapes_scores, bar.patches):
-    plt.text(patch.get_x() + patch.get_width(), patch.get_y(), f"{score:.4f}", va="top")
+          if results.right_hand_landmarks:
+              mp_drawing.draw_landmarks(
+                  image, results.right_hand_landmarks, mp_holistic.HAND_CONNECTIONS,
+                  landmark_drawing_spec=hand_landmark_style, connection_drawing_spec=hand_connection_style)
+              for landmark in results.right_hand_landmarks.landmark:
+                  x, y, z = int(landmark.x * image.shape[1]), int(landmark.y * image.shape[0]), landmark.z
+                  keypoints_frame.append(((x, y, z), 'right'))
 
-  ax.set_xlabel('Score')
-  ax.set_title("Face Blendshapes")
-  plt.tight_layout()
-  plt.show()
+          # Get upper-body pose keypoints
+          if results.pose_landmarks:
+              pose_landmarks = results.pose_landmarks.landmark
+              h, w, _ = image.shape
+
+              # Extract & collect upper-body keypoints
+              for landmark_id in UPPER_BODY_LANDMARKS:
+                  lm = pose_landmarks[landmark_id]
+                  x, y, z = int(lm.x * w), int(lm.y * h), lm.z
+                  pose_frame.append((x, y, z))
+
+              # Draw selected upper-body pose connections
+              for connection in POSE_CONNECTIONS_UPPER_BODY:
+                  start_idx, end_idx = connection
+                  start = pose_landmarks[start_idx]
+                  end = pose_landmarks[end_idx]
+
+                  x0, y0 = int(start.x * w), int(start.y * h)
+                  x1, y1 = int(end.x * w), int(end.y * h)
+                  cv2.line(image, (x0, y0), (x1, y1), (255, 255, 0), 2)
+
+          all_hand_keypoints.append(keypoints_frame)
+          all_pose_keypoints.append(pose_frame)
+          all_images.append(image)
+
+      all_images = np.array(all_images)
+      return all_hand_keypoints, all_pose_keypoints, all_images
+
+

@@ -1,6 +1,8 @@
 # folders
 venv/
 WLASL/
+MS-ASL/
+ASL-Citizen/
 __pycache__/
 trimmed_videos/
 videos/
