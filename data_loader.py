@@ -5,18 +5,23 @@ import torch
 import os
 import json 
 
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+from IPython.display import HTML
+
 
 def load_json(fname):
     with open(fname, 'r') as f:
         return json.load(f)
 
 class MSASLVideoDataset(Dataset):
-    def __init__(self, video_paths, labels, num_frames=32, img_size=224, transforms=None):
+    def __init__(self, video_paths, labels, n_labels=100, num_frames=32, img_size=224, transforms=None):
         self.video_paths = video_paths
         self.labels = labels
         self.num_frames = num_frames
         self.img_size = img_size
         self.transforms = transforms
+        self.n_labels = n_labels
 
     def __len__(self):
         return len(self.video_paths)
@@ -29,7 +34,8 @@ class MSASLVideoDataset(Dataset):
         if self.transforms:
             frames = self.transforms(frames)
 
-        return frames, label
+        ohe_label = torch.from_numpy(int_to_ohe(label, self.n_labels))
+        return frames, ohe_label
 
     def load_video(self, path):
         frames = read_frames(path, self.img_size)
@@ -48,6 +54,66 @@ class MSASLVideoDataset(Dataset):
         frames = torch.from_numpy(frames).float() / 255.0  # normalize 0-1
         return frames
     
+
+class MSASLPreProcessedVideoDataset(Dataset):
+    def __init__(self, video_paths, labels, transforms=None):
+        self.video_paths = video_paths
+        self.labels = labels
+        self.transforms = transforms
+
+    def __len__(self):
+        return len(self.video_paths)
+
+    def __getitem__(self, idx):
+        video_path = self.video_paths[idx]
+        label = self.labels[idx]
+
+        frames = np.load(video_path)
+        if self.transforms:
+            frames = self.transforms(frames)
+        
+        frames = torch.from_numpy(frames)
+        ohe_label = torch.from_numpy(int_to_ohe(label, self.n_labels))
+        return frames, ohe_label
+    
+class MSASLKeypointsDataset(Dataset):
+    def __init__(self, kpts_paths, labels, transforms=None):
+        self.kpts_paths = kpts_paths
+        self.labels = labels
+
+    def __len__(self):
+        return len(self.kpts_paths)
+
+    def __getitem__(self, idx):
+        kpts_path = self.kpts_paths[idx]
+        label = self.labels[idx]
+        metadata = load_json(kpts_path)
+        hand_kpts = metadata['hand_keypoints']
+        pose_kpts = metadata['pose_keypoints']
+        all_keypoints = []
+        for frame_ind in range(len(hand_kpts)):
+            hand_template = np.zeros((21*2,3))
+            pose_template = np.zeros((6,3))
+            for i,kpt in enumerate(hand_kpts[frame_ind]):
+                hand_template[i] = kpt[0]
+            for i,kpt in enumerate(pose_kpts[frame_ind]):
+                pose_template[i] = kpt
+            merge_kpts = np.concat((hand_template, pose_template)).tolist()
+            all_keypoints.append(merge_kpts)
+        
+        all_keypoints = torch.Tensor(all_keypoints)
+        ohe_label = torch.from_numpy(int_to_ohe(label, self.n_labels))
+        return all_keypoints, ohe_label
+
+def load_json(fname):
+    with open(fname, 'r') as f:
+        return json.load(f)
+
+def int_to_ohe(ind, n):
+    ohe = np.zero(shape = (n,))
+    ohe[ind] = 1
+    return ohe
+    
 def read_frames(path, img_size):
     cap = cv2.VideoCapture(path)
     frames = []
@@ -64,12 +130,6 @@ def read_frames(path, img_size):
 
     frames = np.array(frames)
     return frames
-
-
-import matplotlib.pyplot as plt
-import matplotlib.animation as animation
-from IPython.display import HTML
-
 
 def plot_video_gif(video_tensor, fps=5, label=None):
     """
