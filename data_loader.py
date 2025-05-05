@@ -56,10 +56,11 @@ class MSASLVideoDataset(Dataset):
     
 
 class MSASLPreProcessedVideoDataset(Dataset):
-    def __init__(self, video_paths, labels, transforms=None):
+    def __init__(self, video_paths, labels, n_labels=100, transforms=None):
         self.video_paths = video_paths
         self.labels = labels
         self.transforms = transforms
+        self.n_labels = n_labels
 
     def __len__(self):
         return len(self.video_paths)
@@ -77,9 +78,10 @@ class MSASLPreProcessedVideoDataset(Dataset):
         return frames, ohe_label
     
 class MSASLKeypointsDataset(Dataset):
-    def __init__(self, kpts_paths, labels, transforms=None):
+    def __init__(self, kpts_paths, labels, n_labels=100, transforms=None):
         self.kpts_paths = kpts_paths
         self.labels = labels
+        self.n_labels = n_labels
 
     def __len__(self):
         return len(self.kpts_paths)
@@ -110,7 +112,7 @@ def load_json(fname):
         return json.load(f)
 
 def int_to_ohe(ind, n):
-    ohe = np.zero(shape = (n,))
+    ohe = np.zeros(shape = (n,))
     ohe[ind] = 1
     return ohe
     
