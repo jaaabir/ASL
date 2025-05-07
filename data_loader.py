@@ -50,17 +50,18 @@ class MSASLVideoDataset(Dataset):
             pad_frames = np.repeat(frames[-1:], pad_len, axis=0)
             frames = np.concatenate((frames, pad_frames), axis=0)
 
-        # frames = frames.transpose(0, 3, 1, 2)  # (Frames, Channels, Height, Width)
+        frames = frames.transpose(0, 3, 1, 2)  # (Frames, Channels, Height, Width)
         frames = torch.from_numpy(frames).float() / 255.0  # normalize 0-1
         return frames
     
 
 class MSASLPreProcessedVideoDataset(Dataset):
-    def __init__(self, video_paths, labels, n_labels=100, transforms=None):
+    def __init__(self, video_paths, labels, n_labels=100, transforms=None, ohe_label = False):
         self.video_paths = video_paths
         self.labels = labels
         self.transforms = transforms
         self.n_labels = n_labels
+        self.ohe_label = ohe_label
 
     def __len__(self):
         return len(self.video_paths)
@@ -74,8 +75,9 @@ class MSASLPreProcessedVideoDataset(Dataset):
             frames = self.transforms(frames)
         
         frames = torch.from_numpy(frames)
-        ohe_label = torch.from_numpy(int_to_ohe(label, self.n_labels))
-        return frames, ohe_label
+        frames = frames.permute(0, 3, 1, 2)
+        nlabel = torch.from_numpy(int_to_ohe(label, self.n_labels)) if self.ohe_label else torch.tensor(label, dtype=torch.long)
+        return frames, nlabel
     
 class MSASLKeypointsDataset(Dataset):
     def __init__(self, kpts_paths, labels, n_labels=100, transforms=None):
