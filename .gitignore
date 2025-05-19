@@ -6,6 +6,7 @@ ASL-Citizen/
 __pycache__/
 trimmed_videos/
 videos/
+models/
 
 # files
 *.mp4
