@@ -195,20 +195,25 @@ class MSASLKeypointsDataset16Frames(Dataset):
         pose_kpts = metadata['pose_keypoints']
         all_keypoints = []
         for frame_ind in range(len(hand_kpts)):
-            hand_template = np.zeros((21*2,3))
-            pose_template = np.zeros((6,3))
+            hand_template = np.zeros((21*2,3), dtype=np.float32)
+            pose_template = np.zeros((6,3), dtype=np.float32)
             for i,kpt in enumerate(hand_kpts[frame_ind]):
-                kpt[0] = kpt[0] / 224
-                kpt[1] = kpt[1] / 224
-                hand_template[i] = kpt
+                if kpt:
+                    kpt = np.array(kpt, dtype=np.float32)
+                    kpt[0] /= 224.0  # normalize x
+                    kpt[1] /= 224.0  # normalize y
+                    hand_template[i] = kpt
             for i,kpt in enumerate(pose_kpts[frame_ind]):
-                kpt[0] = kpt[0] / 224
-                kpt[1] = kpt[1] / 224
-                pose_template[i] = kpt
-            merge_kpts = np.concat((hand_template, pose_template)).flatten().tolist()
+                if kpt:
+                    kpt = np.array(kpt, dtype=np.float32)
+                    kpt[0] /= 224.0  # normalize x
+                    kpt[1] /= 224.0  # normalize y
+                    pose_template[i] = kpt
+            merge_kpts = np.concatenate((hand_template, pose_template), axis=0).flatten()
             all_keypoints.append(merge_kpts)
         
-        all_keypoints = torch.Tensor(all_keypoints)
+        all_keypoints = np.stack(all_keypoints).astype(np.float32)  # (T, F)
+        all_keypoints = torch.from_numpy(all_keypoints)
         nlabel = torch.from_numpy(int_to_ohe(label, self.n_labels)) if self.ohe_label else torch.tensor(label, dtype=torch.long)
         return all_keypoints, nlabel
 
