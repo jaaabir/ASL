@@ -1,9 +1,27 @@
 import torch
 import torch.nn as nn
 
+
+# --- CNN Block ---
+class CNN1dBlock(nn.Module):
+    def __init__(self, input_size=144, out_channels=128, kernel_size=3, dropout=0.1, use_pooling=True):
+        super().__init__()
+        layers = [
+            nn.Conv1d(in_channels=input_size, out_channels=out_channels, kernel_size=kernel_size, padding=kernel_size // 2),
+            nn.ReLU(),
+            nn.BatchNorm1d(out_channels)
+        ]
+        if use_pooling:
+            layers.append(nn.MaxPool1d(kernel_size=2))
+        layers.append(nn.Dropout(dropout))
+        self.cnn_block = nn.Sequential(*layers)
+
+    def forward(self, x):  # x: (B, F, T)
+        return self.cnn_block(x)
+
 class TemporalConvTransformer(nn.Module):
     def __init__(self, input_dim=144, patch_size=4, num_patches=4, embed_dim=256, num_heads=4,
-                 num_layers=2, num_classes=100, dropout=0.1):
+                 num_layers=2, num_classes=100, dropout=0.1, use_seq_final_block=False):
         super().__init__()
         assert patch_size * num_patches == 16, "Ensure patching covers entire sequence (e.g., 4x4=16 frames)"
 
@@ -12,11 +30,13 @@ class TemporalConvTransformer(nn.Module):
         self.embed_dim = embed_dim
 
         # 1D conv acts as local temporal feature extractor
-        self.temporal_conv = nn.Sequential(
-            nn.Conv1d(in_channels=input_dim, out_channels=embed_dim, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.Dropout(dropout)
-        )
+        # self.temporal_conv = nn.Sequential(
+        #     nn.Conv1d(in_channels=input_dim, out_channels=embed_dim, kernel_size=3, padding=1),
+        #     nn.ReLU(),
+        #     nn.Dropout(dropout)
+        # )
+
+        self.temporal_conv = CNN1dBlock(input_size=input_dim, out_channels=embed_dim, dropout=dropout, use_pooling=False)
 
         # Linear projection of patches
         self.patch_embedding = nn.Linear(embed_dim * patch_size, embed_dim)
@@ -35,7 +55,17 @@ class TemporalConvTransformer(nn.Module):
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
 
         # Final classifier
-        self.cls_head = nn.Linear(embed_dim, num_classes)
+        if use_seq_final_block:
+            self.cls_head = nn.Sequential(
+                nn.Linear(embed_dim, 128),
+                nn.ReLU(),
+                nn.Dropout(0.3),
+                nn.Linear(128, 64),
+                nn.ReLU(),
+                nn.Linear(64, num_classes)
+            )
+        else:
+            self.cls_head = nn.Linear(embed_dim, num_classes)
 
     def forward(self, x):  # x: (B, T, F)
         B, T, F = x.size()
@@ -52,24 +82,114 @@ class TemporalConvTransformer(nn.Module):
 
         x = x.mean(dim=1)  # Global average pooling over patches
         return self.cls_head(x)  # (B, num_classes)
+    
 
-
-# --- CNN Block ---
-class CNN1dBlock(nn.Module):
-    def __init__(self, input_size=144, out_channels=128, kernel_size=3, dropout=0.1, use_pooling=True):
+class TemporalConvTransformer_B(nn.Module):
+    def __init__(
+        self,
+        input_dim=144,
+        patch_size=4,
+        num_patches=4,
+        embed_dim=256,
+        num_heads=4,
+        num_layers=2,
+        num_classes=100,
+        dropout=0.1,
+        use_seq_final_block=False,
+        use_cls_token=False
+    ):
         super().__init__()
-        layers = [
-            nn.Conv1d(in_channels=input_size, out_channels=out_channels, kernel_size=kernel_size, padding=kernel_size // 2),
-            nn.ReLU(),
-            nn.BatchNorm1d(out_channels)
-        ]
-        if use_pooling:
-            layers.append(nn.MaxPool1d(kernel_size=2))
-        layers.append(nn.Dropout(dropout))
-        self.cnn_block = nn.Sequential(*layers)
+        seq_len = patch_size * num_patches
+        assert seq_len == 16, (
+            f"patch_size * num_patches must equal sequence length, got {patch_size}*{num_patches}={seq_len}"
+        )
 
-    def forward(self, x):  # x: (B, F, T)
-        return self.cnn_block(x)
+        self.patch_size = patch_size
+        self.embed_dim = embed_dim
+        self.use_cls_token = use_cls_token
+        self.num_patches = num_patches
+
+        # 1D conv to extract local temporal features from keypoints
+        self.temporal_conv = CNN1dBlock(
+            input_size=input_dim,
+            out_channels=embed_dim,
+            kernel_size=3,
+            dropout=dropout,
+            use_pooling=False
+        )
+
+        # Linear projection of concatenated patch features
+        self.patch_embedding = nn.Linear(embed_dim * patch_size, embed_dim)
+
+        # CLS token param
+        if use_cls_token:
+            self.cls_token = nn.Parameter(torch.randn(1, 1, embed_dim))
+            pos_count = num_patches + 1
+        else:
+            pos_count = num_patches
+        # Positional embeddings
+        self.pos_embed = nn.Parameter(torch.randn(1, pos_count, embed_dim))
+
+        # Transformer layers with post-layernorm
+        self.transformer_layers = nn.ModuleList()
+        for _ in range(num_layers):
+            encoder = nn.TransformerEncoderLayer(
+                d_model=embed_dim,
+                nhead=num_heads,
+                dim_feedforward=embed_dim * 4,
+                dropout=dropout,
+                batch_first=True
+            )
+            norm = nn.LayerNorm(embed_dim)
+            self.transformer_layers.append(nn.ModuleDict({'encoder': encoder, 'norm': norm}))
+
+        # Classification head
+        if use_seq_final_block:
+            self.cls_head = nn.Sequential(
+                nn.Linear(embed_dim, 128),
+                nn.ReLU(),
+                nn.Dropout(0.3),
+                nn.Linear(128, 64),
+                nn.ReLU(),
+                nn.Linear(64, num_classes)
+            )
+        else:
+            self.cls_head = nn.Linear(embed_dim, num_classes)
+
+    def forward(self, x):
+        """
+        x: (B, T, F) where T=16, F=input_dim
+        """
+        B, T, F = x.size()
+        # Temporal Conv (B, F, T) -> (B, embed_dim, T)
+        x = x.permute(0, 2, 1)
+        x = self.temporal_conv(x)
+        x = x.permute(0, 2, 1)  # (B, T, embed_dim)
+
+        # Split into patches and embed
+        x = x.reshape(B, self.num_patches, self.patch_size * self.embed_dim)
+        x = self.patch_embedding(x)  # (B, num_patches, embed_dim)
+
+        # Prepend CLS token if used
+        if self.use_cls_token:
+            cls_tokens = self.cls_token.expand(B, -1, -1)
+            x = torch.cat([cls_tokens, x], dim=1)  # (B, num_patches+1, embed_dim)
+
+        # Add positional embeddings
+        x = x + self.pos_embed
+
+        # Transformer stack with post-LayerNorm
+        for layer in self.transformer_layers:
+            x = layer['encoder'](x)
+            x = layer['norm'](x)
+
+        # Classification: use CLS token or mean pooling
+        if self.use_cls_token:
+            x = x[:, 0]  # CLS token
+        else:
+            x = x.mean(dim=1)
+        return self.cls_head(x)
+
 
 
 # --- CNN + RNN (GRU/LSTM) Hybrid ---

@@ -10,3 +10,5 @@ models/
 
 # files
 *.mp4
+*.pt
+*.pth
