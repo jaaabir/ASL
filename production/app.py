@@ -7,13 +7,33 @@ from PyQt5.QtWidgets import QApplication, QLabel, QPushButton, QVBoxLayout, QWid
 from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtGui import QImage, QPixmap
 import mediapipe as mp
+import json 
 
-API_URL = "http://localhost:8000/detect"
+API_URL = "http://127.0.0.1:8000/detect"
+
+
+def read_json(fname):
+    with open(fname, 'r') as f:
+        data = json.load(f)
+    return data
+
+def get_response(payload):
+    try:
+        response = requests.post(API_URL, json=payload)
+        if response.status_code == 200:
+            pred = response.json()["prediction"]
+        else:
+            pred = 'Error'
+    except Exception as e:
+        pred = 'Error'
+    
+    return pred
 
 class KeypointApp(QWidget):
     def __init__(self):
         super().__init__()
 
+        self.class_mapper = read_json('class_mapper.json')
         self.setWindowTitle("Real-Time Keypoint Detection")
         self.setGeometry(100, 100, 800, 600)
 
@@ -117,26 +137,15 @@ class KeypointApp(QWidget):
         for i in range(0, len(self.keypoint_buffer) - sequence_len + 1, stride):
             segment = self.keypoint_buffer[i:i + sequence_len]
             segments.append(segment)
-
-        predictions = []
         
         self.info_label.setText("info: Detecting the signs...")
-        for segment in segments:
-            payload = {"data": segment}
-            try:
-                response = requests.post(API_URL, json=payload)
-                if response.status_code == 200:
-                    pred = response.json()["prediction"]
-                    predictions.append(pred)
-                else:
-                    predictions.append("error")
-            except Exception as e:
-                predictions.append("error")
-
-        if predictions:
-            self.prediction_label.setText(f"Predictions: {predictions}")
+        payload = {"data": segments, 'score': 'hard'}
+        prediction = get_response(payload)
+        prediction = self.class_mapper[prediction]
+        if prediction:
+            self.prediction_label.setText(f"Predictions: {prediction}")
         else:
-            self.prediction_label.setText("No valid predictions.")
+            self.prediction_label.setText("Predictions: No valid prediction.")
         self.info_label.setText("info: ")
 
     def closeEvent(self, event):

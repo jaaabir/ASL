@@ -2,6 +2,8 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import torch
 import numpy as np
+from collections import Counter
+from typing import Literal
 import os 
 
 app = FastAPI()
@@ -18,7 +20,8 @@ except Exception as e:
 
 # === Define Input Schema ===
 class KeypointInput(BaseModel):
-    data: list[list[float]]  # Expecting shape (T=16, F=144)
+    data: list[list[list[float]]]  # Expecting shape (B=n, T=16, F=144)
+    score: Literal["hard", "soft"] 
 
 
 # === GET endpoint ===
@@ -31,15 +34,20 @@ def root():
 @app.post("/detect")
 def detect(input_data: KeypointInput):
     try:
+        score = input_data.score
         arr = np.array(input_data.data, dtype=np.float32)
-        if arr.shape != (16, 144):
-            raise ValueError("Input must be of shape (16, 144)")
-
-        x = torch.tensor(arr).unsqueeze(0).to(device)
-
+        x = torch.tensor(arr).to(device)
+        print(input_data)
+        print(x.shape)
         with torch.no_grad():
             output = model(x)
-        pred = torch.argmax(output, dim=1).item()
+        if score == 'hard':
+            pred = torch.argmax(output, dim=1)
+            pred = Counter(pred.tolist()).most_common(1)[0][0]
+        if score == 'soft':
+            pred = torch.mean(output, dim=0).argmax().item()
+
+        print(pred)
         return {"prediction": pred}
 
     except Exception as e:
